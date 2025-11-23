@@ -48,14 +48,14 @@ public class FleaAdjustmentLoader(
         try
         {
             var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"user\mods\FleaAdjustment\Config\FleaAdjustmentConfig.json");
-            var jsonbs = File.ReadAllText(configPath);
-            var configuration = JsonSerializer.Deserialize<FleaPriceChanging>(jsonbs, new JsonSerializerOptions 
+            var jsonContent = File.ReadAllText(configPath);
+            var config = JsonSerializer.Deserialize<FleaPriceChanging>(jsonContent, new JsonSerializerOptions 
             { 
                 PropertyNameCaseInsensitive = true,
                 ReadCommentHandling = JsonCommentHandling.Skip
             });
 
-            return configuration ?? new FleaPriceChanging { Enabled = false };
+            return config ?? new FleaPriceChanging { Enabled = false };
         }
         catch
         {
@@ -65,86 +65,79 @@ public class FleaAdjustmentLoader(
 
     private void ApplyCustomPricing()
     {
-        try
+        if (_fleaconfiguration == null || !_fleaconfiguration.Enabled)
+            return;
+
+        // Modify prices.json
+        var prices = databaseService.GetPrices();
+
+        foreach (var kvp in prices)
         {
-            if (_fleaconfiguration == null || !_fleaconfiguration.Enabled)
-                return;
+            var itemId = kvp.Key;
+            var originalPrice = kvp.Value;
+            double multiplier;
 
-            // Modify prices.json
-            var prices = databaseService.GetPrices();
-
-            foreach (var keyValuePair in prices)
+            if (_fleaconfiguration.SpecificItemOverrides.TryGetValue(itemId.ToString(), out var specificMultiplier))
             {
-                var itemId = keyValuePair.Key;
-                var originalPrice = keyValuePair.Value;
-                double multiplier;
+                multiplier = specificMultiplier;
+            }
+            else if (_fleaconfiguration.UseRangeBasedPricing)
+            {
+                multiplier = GetMultiplierForPriceRange(originalPrice);
+            }
+            else
+            {
+                multiplier = _fleaconfiguration.PriceMultiplier;
+            }
 
-                if (_fleaconfiguration.SpecificItemOverrides.TryGetValue(itemId.ToString(), out var specificMultiplier))
+            var newPrice = originalPrice * multiplier;
+            
+            if (newPrice < _fleaconfiguration.MinimumPrice)
+                newPrice = _fleaconfiguration.MinimumPrice;
+            if (newPrice > _fleaconfiguration.MaximumPrice)
+                newPrice = _fleaconfiguration.MaximumPrice;
+
+            if (Math.Abs(newPrice - originalPrice) > 0.01)
+            {
+                prices[itemId] = newPrice;
+            }
+        }
+
+        // Modify handbook prices
+        var handbook = databaseService.GetHandbook();
+        
+        foreach (var item in handbook.Items)
+        {
+            if (item.Price.HasValue && item.Price > 0)
+            {
+                var oldHandbookPrice = item.Price.Value;
+                double multiplier;
+                
+                if (_fleaconfiguration.SpecificItemOverrides.TryGetValue(item.Id, out var specificMultiplier))
                 {
                     multiplier = specificMultiplier;
                 }
                 else if (_fleaconfiguration.UseRangeBasedPricing)
                 {
-                    multiplier = GetMultiplierForPriceRange(originalPrice);
+                    multiplier = GetMultiplierForPriceRange(oldHandbookPrice);
                 }
                 else
                 {
                     multiplier = _fleaconfiguration.PriceMultiplier;
                 }
-
-                var newPrice = originalPrice * multiplier;
+                
+                var newPrice = (int)(oldHandbookPrice * multiplier);
                 
                 if (newPrice < _fleaconfiguration.MinimumPrice)
-                    newPrice = _fleaconfiguration.MinimumPrice;
+                    newPrice = (int)_fleaconfiguration.MinimumPrice;
                 if (newPrice > _fleaconfiguration.MaximumPrice)
-                    newPrice = _fleaconfiguration.MaximumPrice;
-
-                if (Math.Abs(newPrice - originalPrice) > 0.01)
+                    newPrice = (int)_fleaconfiguration.MaximumPrice;
+                
+                if (Math.Abs(newPrice - oldHandbookPrice) > 0.01)
                 {
-                    prices[itemId] = newPrice;
+                    item.Price = newPrice;
                 }
             }
-
-            // Modify handbook prices
-            var handbook = databaseService.GetHandbook();
-            
-            foreach (var item in handbook.Items)
-            {
-                if (item.Price.HasValue && item.Price > 0)
-                {
-                    var oldHandbookPrice = item.Price.Value;
-                    double multiplier;
-                    
-                    if (_fleaconfiguration.SpecificItemOverrides.TryGetValue(item.Id, out var specificMultiplier))
-                    {
-                        multiplier = specificMultiplier;
-                    }
-                    else if (_fleaconfiguration.UseRangeBasedPricing)
-                    {
-                        multiplier = GetMultiplierForPriceRange(oldHandbookPrice);
-                    }
-                    else
-                    {
-                        multiplier = _fleaconfiguration.PriceMultiplier;
-                    }
-                    
-                    var newPrice = (int)(oldHandbookPrice * multiplier);
-                    
-                    if (newPrice < _fleaconfiguration.MinimumPrice)
-                        newPrice = (int)_fleaconfiguration.MinimumPrice;
-                    if (newPrice > _fleaconfiguration.MaximumPrice)
-                        newPrice = (int)_fleaconfiguration.MaximumPrice;
-                    
-                    if (Math.Abs(newPrice - oldHandbookPrice) > 0.01)
-                    {
-                        item.Price = newPrice;
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // Silently fail
         }
     }
 
