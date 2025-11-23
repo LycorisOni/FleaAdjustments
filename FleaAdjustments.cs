@@ -4,6 +4,7 @@ using SPTarkov.Server.Core.Services;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SPTarkov.Server.Core.Models.Spt.Mod;
+using SPTarkov.Server.Core.Models.Utils;
 
 namespace LycorisFleaAdjustments;
 
@@ -23,7 +24,9 @@ public record ModMetadata : AbstractModMetadata
 }
 
 [Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 1)]
-public class FleaAdjustmentLoader(DatabaseService databaseService) : IOnLoad
+public class FleaAdjustmentLoader(
+    DatabaseService databaseService,
+    ISptLogger<FleaAdjustmentLoader> logger) : IOnLoad
 {
     private FleaPriceChanging? _fleaconfiguration;
     
@@ -31,6 +34,12 @@ public class FleaAdjustmentLoader(DatabaseService databaseService) : IOnLoad
     {
         _fleaconfiguration = LoadConfig();
         ApplyCustomPricing();
+        
+        if (_fleaconfiguration?.Enabled == true)
+        {
+            logger.Success("🦊💕 Beep boop! Your flea prices are set, cutie patootie! ✨(｡•̀ᴗ-)✧");
+        }
+        
         return Task.CompletedTask;
     }
 
@@ -38,15 +47,15 @@ public class FleaAdjustmentLoader(DatabaseService databaseService) : IOnLoad
     {
         try
         {
-            var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "user", "mods", "FleaAdjustment", "Config", "FleaAdjustmentConfig.json");
-            var jsonContent = File.ReadAllText(configPath);
-            var config = JsonSerializer.Deserialize<FleaPriceChanging>(jsonContent, new JsonSerializerOptions 
+            var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"user\mods\FleaAdjustment\Config\FleaAdjustmentConfig.json");
+            var jsonbs = File.ReadAllText(configPath);
+            var configuration = JsonSerializer.Deserialize<FleaPriceChanging>(jsonbs, new JsonSerializerOptions 
             { 
                 PropertyNameCaseInsensitive = true,
                 ReadCommentHandling = JsonCommentHandling.Skip
             });
 
-            return config ?? new FleaPriceChanging { Enabled = false };
+            return configuration ?? new FleaPriceChanging { Enabled = false };
         }
         catch
         {
@@ -64,10 +73,10 @@ public class FleaAdjustmentLoader(DatabaseService databaseService) : IOnLoad
             // Modify prices.json
             var prices = databaseService.GetPrices();
 
-            foreach (var kvp in prices)
+            foreach (var keyValuePair in prices)
             {
-                var itemId = kvp.Key;
-                var originalPrice = kvp.Value;
+                var itemId = keyValuePair.Key;
+                var originalPrice = keyValuePair.Value;
                 double multiplier;
 
                 if (_fleaconfiguration.SpecificItemOverrides.TryGetValue(itemId.ToString(), out var specificMultiplier))
