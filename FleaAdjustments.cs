@@ -1,10 +1,11 @@
-﻿using SPTarkov.DI.Annotations;
+using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
 using SPTarkov.Server.Core.Services;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SPTarkov.Server.Core.Models.Spt.Mod;
 using SPTarkov.Server.Core.Models.Utils;
+using SPTarkov.Server.Core.Models.Common;
 
 namespace LycorisFleaAdjustments;
 
@@ -23,130 +24,131 @@ public record ModMetadata : AbstractModMetadata
     public override string? License { get; init; } = "MIT";
 }
 
-[Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 1)]
+[Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 50)]
 public class FleaAdjustmentLoader(
     DatabaseService databaseService,
     ISptLogger<FleaAdjustmentLoader> logger) : IOnLoad
 {
-    private FleaPriceChanging? _fleaconfiguration;
+    private FleaPriceAdjustments? fleaconfig;
     
     public Task OnLoad()
     {
-        _fleaconfiguration = LoadConfig();
+        fleaconfig = LoadConfig();
         ApplyCustomPricing();
         
-        if (_fleaconfiguration?.Enabled == true)
+        if (fleaconfig?.Enabled == true)
         {
             logger.Success("🦊💕 Beep boop! Your flea prices are set, cutie patootie! ✨(｡•̀ᴗ-)✧");
         }
         
         return Task.CompletedTask;
     }
-
-    private FleaPriceChanging LoadConfig()
+    // Checks the config file and reads it. Everything is documented in the config file.
+    private FleaPriceAdjustments LoadConfig()
     {
         try
         {
             var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"user\mods\FleaAdjustment\Config\FleaAdjustmentConfig.json");
             var jsonContent = File.ReadAllText(configPath);
-            var config = JsonSerializer.Deserialize<FleaPriceChanging>(jsonContent, new JsonSerializerOptions 
+            var config = JsonSerializer.Deserialize<FleaPriceAdjustments>(jsonContent, new JsonSerializerOptions 
             { 
                 PropertyNameCaseInsensitive = true,
                 ReadCommentHandling = JsonCommentHandling.Skip
             });
 
-            return config ?? new FleaPriceChanging { Enabled = false };
+            return config ?? new FleaPriceAdjustments { Enabled = false };
         }
         catch
         {
-            return new FleaPriceChanging { Enabled = false };
+            return new FleaPriceAdjustments { Enabled = false };
         }
     }
 
     private void ApplyCustomPricing()
     {
-        if (_fleaconfiguration == null || !_fleaconfiguration.Enabled)
+        if (fleaconfig == null || !fleaconfig.Enabled)
             return;
 
-        // Modify prices.json
         var prices = databaseService.GetPrices();
-
-        foreach (var kvp in prices)
+        var handbook = databaseService.GetHandbook();
+        
+        // Should be working just fine to check handbook first.
+        foreach (var handbookItem in handbook.Items)
         {
-            var itemId = kvp.Key;
-            var originalPrice = kvp.Value;
+            if (!handbookItem.Price.HasValue || handbookItem.Price <= 0)
+                continue;
+            
+            var itemId = new MongoId(handbookItem.Id);
+            
+            // If it is in handbook and not in Prices should add it here safely.
+            if (!prices.ContainsKey(itemId))
+            {
+                double multiplier;
+                
+                if (fleaconfig.SpecificItemOverrides.TryGetValue(handbookItem.Id, out var specificMultiplier))
+                {
+                    multiplier = specificMultiplier;
+                }
+                else if (fleaconfig.UseRangeBasedPricing)
+                {
+                    multiplier = GetMultiplierForPriceRange(handbookItem.Price.Value);
+                }
+                else
+                {
+                    multiplier = fleaconfig.PriceMultiplier;
+                }
+                
+                var newPrice = handbookItem.Price.Value * multiplier;
+                
+                if (newPrice < fleaconfig.MinimumPrice)
+                    newPrice = fleaconfig.MinimumPrice;
+                if (newPrice > fleaconfig.MaximumPrice)
+                    newPrice = fleaconfig.MaximumPrice;
+                
+                prices[itemId] = newPrice;
+            }
+        }
+
+        // This will now modify all the shit in Prices.json hopefully including everything in handbook. Maybe modded items too
+        foreach (var keyValuePair in prices.ToList())
+        {
+            var itemId = keyValuePair.Key;
+            var originalPrice = keyValuePair.Value;
             double multiplier;
 
-            if (_fleaconfiguration.SpecificItemOverrides.TryGetValue(itemId.ToString(), out var specificMultiplier))
+            if (fleaconfig.SpecificItemOverrides.TryGetValue(itemId.ToString(), out var specificMultiplier))
             {
                 multiplier = specificMultiplier;
             }
-            else if (_fleaconfiguration.UseRangeBasedPricing)
+            else if (fleaconfig.UseRangeBasedPricing)
             {
                 multiplier = GetMultiplierForPriceRange(originalPrice);
             }
             else
             {
-                multiplier = _fleaconfiguration.PriceMultiplier;
+                multiplier = fleaconfig.PriceMultiplier;
             }
 
             var newPrice = originalPrice * multiplier;
             
-            if (newPrice < _fleaconfiguration.MinimumPrice)
-                newPrice = _fleaconfiguration.MinimumPrice;
-            if (newPrice > _fleaconfiguration.MaximumPrice)
-                newPrice = _fleaconfiguration.MaximumPrice;
+            if (newPrice < fleaconfig.MinimumPrice)
+                newPrice = fleaconfig.MinimumPrice;
+            if (newPrice > fleaconfig.MaximumPrice)
+                newPrice = fleaconfig.MaximumPrice;
 
             if (Math.Abs(newPrice - originalPrice) > 0.01)
             {
                 prices[itemId] = newPrice;
             }
         }
-
-        // Modify handbook prices
-        var handbook = databaseService.GetHandbook();
-        
-        foreach (var item in handbook.Items)
-        {
-            if (item.Price.HasValue && item.Price > 0)
-            {
-                var oldHandbookPrice = item.Price.Value;
-                double multiplier;
-                
-                if (_fleaconfiguration.SpecificItemOverrides.TryGetValue(item.Id, out var specificMultiplier))
-                {
-                    multiplier = specificMultiplier;
-                }
-                else if (_fleaconfiguration.UseRangeBasedPricing)
-                {
-                    multiplier = GetMultiplierForPriceRange(oldHandbookPrice);
-                }
-                else
-                {
-                    multiplier = _fleaconfiguration.PriceMultiplier;
-                }
-                
-                var newPrice = (int)(oldHandbookPrice * multiplier);
-                
-                if (newPrice < _fleaconfiguration.MinimumPrice)
-                    newPrice = (int)_fleaconfiguration.MinimumPrice;
-                if (newPrice > _fleaconfiguration.MaximumPrice)
-                    newPrice = (int)_fleaconfiguration.MaximumPrice;
-                
-                if (Math.Abs(newPrice - oldHandbookPrice) > 0.01)
-                {
-                    item.Price = newPrice;
-                }
-            }
-        }
     }
 
     private double GetMultiplierForPriceRange(double price)
     {
-        if (_fleaconfiguration?.PriceRanges == null)
+        if (fleaconfig?.PriceRanges == null)
             return 1.0;
 
-        var range = _fleaconfiguration.PriceRanges
+        var range = fleaconfig.PriceRanges
             .OrderBy(r => r.MaxPrice)
             .FirstOrDefault(r => price <= r.MaxPrice);
 
@@ -154,7 +156,7 @@ public class FleaAdjustmentLoader(
     }
 }
 
-public class FleaPriceChanging
+public class FleaPriceAdjustments
 {
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;
