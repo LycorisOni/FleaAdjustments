@@ -1,4 +1,4 @@
-using SPTarkov.DI.Annotations;
+﻿using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
 using SPTarkov.Server.Core.Services;
 using System.Text.Json;
@@ -15,7 +15,7 @@ public record ModMetadata : AbstractModMetadata
     public override string Name { get; init; } = "LycorisFleaAdjustments";
     public override string Author { get; init; } = "LycorisOni";
     public override List<string>? Contributors { get; init; }
-    public override SemanticVersioning.Version Version { get; init; } = new("1.0.0");
+    public override SemanticVersioning.Version Version { get; init; } = new("1.2.0");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.0");
     public override List<string>? Incompatibilities { get; init; }
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
@@ -29,14 +29,14 @@ public class FleaAdjustmentLoader(
     DatabaseService databaseService,
     ISptLogger<FleaAdjustmentLoader> logger) : IOnLoad
 {
-    private FleaPriceAdjustments? fleaconfig;
+    private FleaPriceAdjustments? _fleaconfig;
     
     public Task OnLoad()
     {
-        fleaconfig = LoadConfig();
+        _fleaconfig = LoadConfig();
         ApplyCustomPricing();
         
-        if (fleaconfig?.Enabled == true)
+        if (_fleaconfig?.Enabled == true)
         {
             logger.Success("🦊💕 Beep boop! Your flea prices are set, cutie patootie! ✨(｡•̀ᴗ-)✧");
         }
@@ -66,13 +66,15 @@ public class FleaAdjustmentLoader(
 
     private void ApplyCustomPricing()
     {
-        if (fleaconfig == null || !fleaconfig.Enabled)
+        if (_fleaconfig == null || !_fleaconfig.Enabled)
             return;
 
         var prices = databaseService.GetPrices();
         var handbook = databaseService.GetHandbook();
         
-        // Should be working just fine to check handbook first.
+        
+        // Automatically adjust fees if price multiplier > 1.0
+        ApplyDynamicFeeAdjustment();
         foreach (var handbookItem in handbook.Items)
         {
             if (!handbookItem.Price.HasValue || handbookItem.Price <= 0)
@@ -85,25 +87,25 @@ public class FleaAdjustmentLoader(
             {
                 double multiplier;
                 
-                if (fleaconfig.SpecificItemOverrides.TryGetValue(handbookItem.Id, out var specificMultiplier))
+                if (_fleaconfig.SpecificItemOverrides.TryGetValue(handbookItem.Id, out var specificMultiplier))
                 {
                     multiplier = specificMultiplier;
                 }
-                else if (fleaconfig.UseRangeBasedPricing)
+                else if (_fleaconfig.UseRangeBasedPricing)
                 {
                     multiplier = GetMultiplierForPriceRange(handbookItem.Price.Value);
                 }
                 else
                 {
-                    multiplier = fleaconfig.PriceMultiplier;
+                    multiplier = _fleaconfig.PriceMultiplier;
                 }
                 
                 var newPrice = handbookItem.Price.Value * multiplier;
                 
-                if (newPrice < fleaconfig.MinimumPrice)
-                    newPrice = fleaconfig.MinimumPrice;
-                if (newPrice > fleaconfig.MaximumPrice)
-                    newPrice = fleaconfig.MaximumPrice;
+                if (newPrice < _fleaconfig.MinimumPrice)
+                    newPrice = _fleaconfig.MinimumPrice;
+                if (newPrice > _fleaconfig.MaximumPrice)
+                    newPrice = _fleaconfig.MaximumPrice;
                 
                 prices[itemId] = newPrice;
             }
@@ -116,25 +118,25 @@ public class FleaAdjustmentLoader(
             var originalPrice = keyValuePair.Value;
             double multiplier;
 
-            if (fleaconfig.SpecificItemOverrides.TryGetValue(itemId.ToString(), out var specificMultiplier))
+            if (_fleaconfig.SpecificItemOverrides.TryGetValue(itemId.ToString(), out var specificMultiplier))
             {
                 multiplier = specificMultiplier;
             }
-            else if (fleaconfig.UseRangeBasedPricing)
+            else if (_fleaconfig.UseRangeBasedPricing)
             {
                 multiplier = GetMultiplierForPriceRange(originalPrice);
             }
             else
             {
-                multiplier = fleaconfig.PriceMultiplier;
+                multiplier = _fleaconfig.PriceMultiplier;
             }
 
             var newPrice = originalPrice * multiplier;
             
-            if (newPrice < fleaconfig.MinimumPrice)
-                newPrice = fleaconfig.MinimumPrice;
-            if (newPrice > fleaconfig.MaximumPrice)
-                newPrice = fleaconfig.MaximumPrice;
+            if (newPrice < _fleaconfig.MinimumPrice)
+                newPrice = _fleaconfig.MinimumPrice;
+            if (newPrice > _fleaconfig.MaximumPrice)
+                newPrice = _fleaconfig.MaximumPrice;
 
             if (Math.Abs(newPrice - originalPrice) > 0.01)
             {
@@ -143,12 +145,111 @@ public class FleaAdjustmentLoader(
         }
     }
 
+
+    private void ApplyDynamicFeeAdjustment()
+    {
+        // Only adjust fees if price multiplier > 1.0
+        if (_fleaconfig.PriceMultiplier <= 1.0)
+            return;
+    
+        // Calculate the highest effective multiplier (considering overrides)
+        double effectiveMultiplier = _fleaconfig.PriceMultiplier;
+    
+        // Check range based pricing for higher multipliers
+        if (_fleaconfig.UseRangeBasedPricing && _fleaconfig.PriceRanges.Any())
+        {
+            var maxRangeMultiplier = _fleaconfig.PriceRanges.Max(r => r.Multiplier);
+            if (maxRangeMultiplier > effectiveMultiplier)
+                effectiveMultiplier = maxRangeMultiplier;
+        }
+    
+        // Check specific item overrides for higher multipliers
+        if (_fleaconfig.SpecificItemOverrides.Any())
+        {
+            var maxOverrideMultiplier = _fleaconfig.SpecificItemOverrides.Values.Max();
+            if (maxOverrideMultiplier > effectiveMultiplier)
+                effectiveMultiplier = maxOverrideMultiplier;
+        }
+    
+        // Use cubed divider to counter exponential fee growth
+        double feeDivider = Math.Pow(effectiveMultiplier, 3);
+    
+        // Modify globals RagFair taxes
+        ModifyGlobalsRagfairTaxes(feeDivider);
+    }
+
+    private void ModifyGlobalsRagfairTaxes(double feeDivider)
+    {
+        try
+        {
+            var globals = databaseService.GetGlobals();
+            var globalsType = globals.GetType();
+            
+            // Get Configuration property
+            var configProperty = globalsType.GetProperty("Configuration");
+            if (configProperty == null)
+                return;
+            
+            var config = configProperty.GetValue(globals);
+            var configType = config.GetType();
+            
+            // Get RagFair from Configuration
+            var ragfairProperty = configType.GetProperty("RagFair");
+            if (ragfairProperty == null)
+                return;
+            
+            var ragfair = ragfairProperty.GetValue(config);
+            ModifyRagfairTaxes(ragfair, feeDivider);
+        }
+        catch (Exception ex)
+        {
+            // Silently fail
+        }
+    }
+    private void ModifyRagfairTaxes(dynamic ragfair, double feeDivider)
+    {
+        try
+        {
+            var ragfairType = ragfair.GetType();
+            
+            // I'm just gonna use all three cause I'm too lazy to figure out which is the fee controller and I don't think it should break anything.
+            var communityTaxProperty = ragfairType.GetProperty("CommunityTax");
+            var communityItemTaxProperty = ragfairType.GetProperty("CommunityItemTax");
+            var communityRequirementTaxProperty = ragfairType.GetProperty("CommunityRequirementTax");
+            
+            if (communityTaxProperty != null)
+            {
+                var currentValue = Convert.ToDouble(communityTaxProperty.GetValue(ragfair));
+                var newValue = currentValue / feeDivider;
+                communityTaxProperty.SetValue(ragfair, Convert.ChangeType(newValue, communityTaxProperty.PropertyType));
+            }
+            
+            if (communityItemTaxProperty != null)
+            {
+                var currentValue = Convert.ToDouble(communityItemTaxProperty.GetValue(ragfair));
+                var newValue = currentValue / feeDivider;
+                communityItemTaxProperty.SetValue(ragfair, Convert.ChangeType(newValue, communityItemTaxProperty.PropertyType));
+            }
+            
+            if (communityRequirementTaxProperty != null)
+            {
+                var currentValue = Convert.ToDouble(communityRequirementTaxProperty.GetValue(ragfair));
+                var newValue = currentValue / feeDivider;
+                communityRequirementTaxProperty.SetValue(ragfair, Convert.ChangeType(newValue, communityRequirementTaxProperty.PropertyType));
+            }
+        }
+        catch (Exception ex)
+        {
+            // Silently fail
+        }
+    }
+    
     private double GetMultiplierForPriceRange(double price)
     {
-        if (fleaconfig?.PriceRanges == null)
+        if (_fleaconfig?.PriceRanges == null)
             return 1.0;
 
-        var range = fleaconfig.PriceRanges
+        var range = _fleaconfig.PriceRanges
             .OrderBy(r => r.MaxPrice)
             .FirstOrDefault(r => price <= r.MaxPrice);
 
@@ -178,6 +279,7 @@ public class FleaPriceAdjustments
 
     [JsonPropertyName("maximumPrice")]
     public double MaximumPrice { get; set; } = 500000000;
+
 }
 
 public class PriceRange
