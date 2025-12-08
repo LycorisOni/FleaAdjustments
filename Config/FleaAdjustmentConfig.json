@@ -33,8 +33,16 @@
       "multiplier": 0.5
     }
   ],
-
-
+  // Allows adding individual items to the blacklist found in the same database below just uncomment them to use them but that is how they should be set up to add and use. 
+  "fleaBlacklistAddition": [
+    // "5d80c60f86f77440373c4ece",
+    // "575146b724597720a27126d5"
+  ],
+  // More advanced but similar you pick a parent like Ammo to add to the category blacklist and like the one before keep the list like this just without being commented out. 
+  "fleaCategoryBlacklistAddition": [
+    // "5485a8684bdc2da71d8b4567",
+    // "5448e8d64bdc2dce718b4568"
+  ],
   // Override specific items with custom multipliers
   // These will always apply regardless of simple or range-based mode so you can pick items you want to be more expensive or cheaper to your liking.
   // Format: "ItemMongoID": multiplier Keep it on the standard format, or it breaks

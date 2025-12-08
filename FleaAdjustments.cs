@@ -6,6 +6,8 @@ using System.Text.Json.Serialization;
 using SPTarkov.Server.Core.Models.Spt.Mod;
 using SPTarkov.Server.Core.Models.Utils;
 using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Spt.Config;
+using SPTarkov.Server.Core.Servers;
 
 namespace LycorisFleaAdjustments;
 
@@ -15,7 +17,7 @@ public record ModMetadata : AbstractModMetadata
     public override string Name { get; init; } = "LycorisFleaAdjustments";
     public override string Author { get; init; } = "LycorisOni";
     public override List<string>? Contributors { get; init; }
-    public override SemanticVersioning.Version Version { get; init; } = new("1.3.0");
+    public override SemanticVersioning.Version Version { get; init; } = new("2.0.0");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.0");
     public override List<string>? Incompatibilities { get; init; }
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
@@ -26,6 +28,7 @@ public record ModMetadata : AbstractModMetadata
 
 [Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 50)]
 public class FleaAdjustmentLoader(
+    ConfigServer configServer,
     DatabaseService databaseService,
     ISptLogger<FleaAdjustmentLoader> logger) : IOnLoad
 {
@@ -76,9 +79,17 @@ public class FleaAdjustmentLoader(
         if (_fleaconfig.RemoveFleaListingLimits)
         {
             RemoveFleaRestrictions();
-        }    
-        
-        
+        }
+
+        if (_fleaconfig.FleaBlacklistAddition.Any())
+        {
+            AddItemsToFleaBlacklist();
+        }
+
+        if (_fleaconfig.FleaCategoryBlacklistAddition.Any())
+        {
+            AddCategoriesToFleaBlacklist();
+        }
         // Automatically adjust fees if price multiplier > 1.0
         ApplyDynamicFeeAdjustment();
         foreach (var handbookItem in handbook.Items)
@@ -286,6 +297,97 @@ public class FleaAdjustmentLoader(
             // Silently fail
         }
     }
+
+    private void AddItemsToFleaBlacklist()
+    {
+        try
+        {
+            var ragfairConfig = configServer.GetConfig<RagfairConfig>();
+            var ragfairType = ragfairConfig.GetType();
+            
+            var dynamicProp = ragfairType.GetProperty("Dynamic");
+            if (dynamicProp == null)
+                return;
+        
+            var dynamicObj = dynamicProp.GetValue(ragfairConfig);  
+            var dynamicType = dynamicObj.GetType();                
+            
+            var blacklistProp = dynamicType.GetProperty("Blacklist");  
+            if (blacklistProp == null)
+                return;
+        
+            var blacklistObj = blacklistProp.GetValue(dynamicObj);  
+            var blacklistType = blacklistObj.GetType();             
+            
+            var customProp = blacklistType.GetProperty("Custom");   
+            if (customProp == null)
+                return;
+        
+            var customList = customProp.GetValue(blacklistObj);
+            
+            var addMethod = customList.GetType().GetMethod("Add");
+            if (addMethod == null)
+                return;
+            foreach (var itemId in _fleaconfig.FleaBlacklistAddition)
+            {
+                var mongoId = new MongoId(itemId);
+                addMethod.Invoke(customList, new object[] { mongoId });
+            }    
+        }
+        catch (Exception ex)
+        {
+            // Silently Fail
+        }
+    }
+
+    private void AddCategoriesToFleaBlacklist()
+    {
+        try
+        {
+            // Im lazy this is the same damn thing as the previous shit. So its stolen and reused.
+            var ragfairConfig = configServer.GetConfig<RagfairConfig>();
+            var ragfairType = ragfairConfig.GetType();
+            
+            var dynamicProp = ragfairType.GetProperty("Dynamic");
+            if (dynamicProp == null)
+                return;
+        
+            var dynamicObj = dynamicProp.GetValue(ragfairConfig);  
+            var dynamicType = dynamicObj.GetType();                
+            
+            var blacklistProp = dynamicType.GetProperty("Blacklist");  
+            if (blacklistProp == null)
+                return;
+        
+            var blacklistObj = blacklistProp.GetValue(dynamicObj);  
+            var blacklistType = blacklistObj.GetType();             
+            
+            var customProp = blacklistType.GetProperty("CustomItemCategoryList");   
+            if (customProp == null)
+                return;
+        
+            var customList = customProp.GetValue(blacklistObj);
+            
+            var addMethod = customList.GetType().GetMethod("Add");
+            if (addMethod == null)
+                return;
+            foreach (var itemId in _fleaconfig.FleaCategoryBlacklistAddition)
+            {
+                var mongoId = new MongoId(itemId);
+                addMethod.Invoke(customList, new object[] { mongoId });
+            }
+            var enableProp = blacklistType.GetProperty("EnableCustomItemCategoryList");
+            if (enableProp != null)
+            {
+                enableProp.SetValue(blacklistObj, true);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Silently Fail
+        }
+    }
+    
     private double GetMultiplierForPriceRange(double price)
     {
         if (_fleaconfig?.PriceRanges == null)
@@ -325,6 +427,11 @@ public class FleaPriceAdjustments
     [JsonPropertyName("removeFleaListingLimits")]
     public bool RemoveFleaListingLimits { get; set; } = false;
 
+    [JsonPropertyName("fleaBlacklistAddition")]
+    public List<string> FleaBlacklistAddition { get; set; } = new();
+    
+    [JsonPropertyName("fleaCategoryBlacklistAddition")]
+    public List<string> FleaCategoryBlacklistAddition { get; set; } = new();
 }
 
 public class PriceRange
