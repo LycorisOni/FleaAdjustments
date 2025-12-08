@@ -71,6 +71,12 @@ public class FleaAdjustmentLoader(
 
         var prices = databaseService.GetPrices();
         var handbook = databaseService.GetHandbook();
+
+
+        if (_fleaconfig.RemoveFleaListingLimits)
+        {
+            RemoveFleaRestrictions();
+        }    
         
         
         // Automatically adjust fees if price multiplier > 1.0
@@ -110,7 +116,7 @@ public class FleaAdjustmentLoader(
                 prices[itemId] = newPrice;
             }
         }
-
+        
         // This will now modify all the shit in Prices.json hopefully including everything in handbook. Maybe modded items too
         foreach (var keyValuePair in prices.ToList())
         {
@@ -144,8 +150,7 @@ public class FleaAdjustmentLoader(
             }
         }
     }
-
-
+    
     private void ApplyDynamicFeeAdjustment()
     {
         // Only adjust fees if price multiplier > 1.0
@@ -243,7 +248,44 @@ public class FleaAdjustmentLoader(
             // Silently fail
         }
     }
-    
+
+    private void RemoveFleaRestrictions()
+    {
+        try
+        {
+            var globals = databaseService.GetGlobals();
+            var globalsType = globals.GetType();
+        
+            var configProperty = globalsType.GetProperty("Configuration");
+            if (configProperty == null)
+                return;
+        
+            var config = configProperty.GetValue(globals);
+            var configType = config.GetType();
+        
+            var ragfairProperty = configType.GetProperty("RagFair");
+            if (ragfairProperty == null)
+                return;
+        
+            var ragfair = ragfairProperty.GetValue(config);
+            var ragfairType = ragfair.GetType();
+        
+            var restrictionsProperty = ragfairType.GetProperty("ItemRestrictions");
+            if (restrictionsProperty == null)
+                return;
+            
+            var elementType = restrictionsProperty.PropertyType.GetGenericArguments()[0];
+            // Create empty list and set it
+            var listType = typeof(List<>).MakeGenericType(elementType);
+            var emptyList = Activator.CreateInstance(listType);
+
+            restrictionsProperty.SetValue(ragfair, emptyList);
+        }
+        catch (Exception ex)
+        {
+            // Silently fail
+        }
+    }
     private double GetMultiplierForPriceRange(double price)
     {
         if (_fleaconfig?.PriceRanges == null)
@@ -279,6 +321,9 @@ public class FleaPriceAdjustments
 
     [JsonPropertyName("maximumPrice")]
     public double MaximumPrice { get; set; } = 500000000;
+    
+    [JsonPropertyName("removeFleaListingLimits")]
+    public bool RemoveFleaListingLimits { get; set; } = false;
 
 }
 

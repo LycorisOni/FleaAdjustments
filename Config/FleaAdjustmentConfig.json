@@ -2,10 +2,12 @@
   // Enable or disable the entire mod either set to true or false
   "enabled": true,
   // This multiplier is applied to ALL items when useRangeBasedPricing is false
-  // Examples include 0.5 for 50% cheaper default or 2.0 for 100% more expensive you must keep it in that format.
+  // Examples include 0.5 for 50% cheaper default or 2.0 for 100% more expensive or hell 10.0 for 1000% more expensive up to you but, you must keep it in that format.
   "priceMultiplier": 0.5,
   // CustomPricing you can use to adjust based on a max price in prices.json or handbook.json to allow for more precise adjustments set to true or false
   "useRangeBasedPricing": false,
+  // Simple Config Option that lets you remove all restrictions to listing amounts like ledx will not be limited to 5 per listing.
+  "removeFleaListingLimits": false,
   // Each range applies to items from 0 (or previous maxPrice) up to its maxPrice
   // Items are matched to the first range where their price <= maxPrice
   // You can even add more ranges by following the format. I just set this up this way to be easy to use for standard users.
@@ -22,17 +24,17 @@
     },
     {
       "name": "GigaChad Items",
-      "maxPrice": 200000,               
-      "multiplier": 0.8                
+      "maxPrice": 200000,
+      "multiplier": 0.8
     },
     {
       "name": "Holy boly my wallet Items",
-      "maxPrice": 999999999,            
-      "multiplier": 0.5                
+      "maxPrice": 999999999,
+      "multiplier": 0.5
     }
   ],
 
-  
+
   // Override specific items with custom multipliers
   // These will always apply regardless of simple or range-based mode so you can pick items you want to be more expensive or cheaper to your liking.
   // Format: "ItemMongoID": multiplier Keep it on the standard format, or it breaks
@@ -40,9 +42,9 @@
   // To find item IDs go to https://db.sp-tarkov.com/search and search up any item you want to change and find its id there. I think this can also change mod item's flea prices, but I didn't check definitely more advanced use.
   // I left some examples here so you can understand how to properly format them if you want them out just remove them. 
   "specificItemOverrides": {
-    "59e3577886f774176a362503": 2.0,    
-    "5d02797c86f774203f38e30a": 0.8,    
-    "5ab8e79e86f7742d8b372e78": 5.0    
+    "59e3577886f774176a362503": 2.0,
+    "5d02797c86f774203f38e30a": 0.8,
+    "5ab8e79e86f7742d8b372e78": 5.0
   },
   // Keep this at 1 never under, but you're welcome to raise the minimum price
   "minimumPrice": 1,
